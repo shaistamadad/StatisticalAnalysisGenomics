@@ -1,0 +1,515 @@
+---
+title: "SVM"
+author: "shaistamadad"
+date: "11/15/2020"
+output: html_document
+---
+```{r}
+library(tibble)
+library(dplyr)
+library(AUC) #
+library(e1071) 
+
+library("pheatmap")
+library("RColorBrewer")
+library(caret)
+library(sigFeature)
+library(SummarizedExperiment)
+```
+
+
+
+
+# Read in the dataset 
+```{r}
+D<- read.table("Problem2_expressionMatrix.txt", row.names = 1)
+Labels<- read.table("Problem2_patientData.txt", header = TRUE)
+D<- as.data.frame(t(D))
+# join the labels and predictors 
+D<- rownames_to_column(D, var = "patient_id")
+NewD<- inner_join(D, Labels, by = "patient_id", copy = FALSE, suffix = c(".x", ".y"))
+#remove patient name column
+df = subset(NewD, select = -c(patient_id) )
+#str(df) ## make sure the labels are factors 
+df$relapse= as.factor(df$relapse)
+table(df$relapse)  #should we balance the dataset? 
+#str(df$relapse)
+dfpredictors= subset(df, select = -c(relapse) )
+Y= as.factor(df$relapse)
+```
+1 to 2 ratio of false to true labels. Although balancing the dataset will reduce the sample size considerably, a higher proportion of true labels can also bias the model. Hence, will run analysis on both balanced and unbalanced datasets and compare the difference in cross validation error. 
+
+```{r}
+# divide the data 
+allFalse<-df[which(df[,"relapse"] == 'FALSE'),] #  
+allTrue<-df[which(df[,"relapse"] == 'TRUE'),]   # 
+sample(1:nrow(allTrue), nrow(allFalse))->rand.0  
+allTrue[rand.0,]->True  
+allFalse -> False 
+Balanced_Dataset= rbind(True,False)
+dfpredictors_balanced= subset(Balanced_Dataset, select = -c(relapse) )
+Y_balanced= as.factor(Balanced_Dataset$relapse)
+table(Balanced_Dataset$relapse)
+```
+
+
+## Feature Selection 
+Tried 3 methods and then compared the cross validation accuracy and auc scores from all three methods 
+
+# Feature Selection 
+3 methods: 
+1) SVM-SigFeature 
+2)SVM-RFE
+3) Simple T-Test 
+
+
+
+##  Run Feature Selection using SVM-SigFeature 
+The idea of “sigFeature()” (Significant Feature Selection): The recursive feature elimination that uses support vector machine can rank better classifiers, but those classifiers may or may not be differently significant between the classes. Features with notable classification accuracy and also differentially significant between the classes have a predominant role in a biological aspect. SigFeature is more efficient in ranking classifiers, as well as in determining differently significant classes among them. 
+
+
+```{r}
+sigfeatureRankedList <- sigFeature(dfpredictors, Y)
+```
+
+
+
+
+```{r}
+# Choose top 100 genes for SVM model 
+DFSigFeature=dfpredictors[ ,sigfeatureRankedList[1:100]]
+```
+
+
+
+```{r}
+sigfeatureRankedList_Balanced<- sigFeature(dfpredictors_balanced, Y_balanced)
+```
+
+
+```{r}
+# Choose top 100 genes for SVM model from balanced dataset 
+DFSigFeature_balanced=dfpredictors_balanced[ ,sigfeatureRankedList_Balanced[1:100]]
+```
+
+
+## How many of the top 100 genes from balanced and unbalanced datasets are common? 
+
+
+```{r}
+list_df = list(DFSigFeature_balanced,DFSigFeature)
+
+col_common = colnames(list_df[[1]])
+for (i in 2:length(list_df)){
+  col_common = intersect(col_common, colnames(list_df[[i]]))
+}
+length(col_common)
+```
+
+## Hence clearly, balancing the dataset affects the ranking of the top genes 
+
+
+## Run feature selection using SVM-RFE 
+To solve the classification problem with the help of ranking the features, SVM-RFE is an algorithm  (proposed by Guyon et. al 2002). In this algorithm, the dataset has been trained with SVM
+linear kernel model to produce a weight vector for each feature. After that, the feature with smallest rank is recursively removed and stored in a stack data structure. The iteration process continues till the last
+feature remains. This criterion is the w value of the decision hyperplane given by the SVM. The weight vector is calculated by squaring the variable w. Finally the features are selected in a list in the descending
+order.
+
+# Using RFE for feature selection 
+
+```{r}
+#Using ubalanced dataset 
+featureRankedList <- svmrfeFeatureRanking(dfpredictors, Y)
+```
+
+```{r}
+DFSVMRFE=dfpredictors[ ,featureRankedList[1:100]]
+```
+
+
+
+## Using the balanced dataset 
+
+
+```{r}
+featureRankedList_balanced <- svmrfeFeatureRanking(dfpredictors_balanced, Y_balanced)
+```
+
+```{r}
+DFSVMRFE_balanced=dfpredictors[ ,featureRankedList_balanced[1:100]]
+```
+
+
+
+
+## How many of the top 100 genes from balanced and unbalanced datasets are common using SVM-RFE feature selection? 
+
+
+```{r}
+list_df1 = list(DFSVMRFE_balanced,DFSVMRFE)
+
+col_common1 = colnames(list_df1[[1]])
+for (i in 2:length(list_df1)){
+  col_common1 = intersect(col_common1, colnames(list_df1[[i]]))
+}
+length(col_common1)
+```
+
+
+
+
+## How many of the top 100 genes from balanced datasets are common using SVM-RFE feature selection versus sigFeature? 
+
+
+```{r}
+list_df3 = list(DFSVMRFE_balanced,DFSigFeature_balanced)
+
+col_common3 = colnames(list_df3[[1]])
+for (i in 2:length(list_df3)){
+  col_common3 = intersect(col_common3, colnames(list_df3[[i]]))
+}
+length(col_common3)
+```
+
+
+
+## How many of the top 100 genes from unbalanced datasets are common using SVM-RFE feature selection versus sigFeature? 
+
+
+
+```{r}
+list_df4 = list(DFSVMRFE,DFSigFeature)
+
+col_common4 = colnames(list_df4[[1]])
+for (i in 2:length(list_df4)){
+  col_common4 = intersect(col_common4, colnames(list_df4[[i]]))
+}
+length(col_common4)
+```
+
+
+# Simple T-Test 
+
+```{r}
+ER.pos <- allTrue
+ER.pos = subset(ER.pos, select = -c(relapse) )
+mu.pos <- apply(ER.pos,2,mean)
+var.pos <- apply(ER.pos,2,var)
+
+ER.neg <- allFalse
+ER.neg = subset(ER.neg , select = -c(relapse) )
+mu.neg <- apply(ER.neg ,2,mean)#compute mean of each column (gene)
+var.neg <- apply(ER.neg,2,var)  # compute variance of each column (gene)
+
+meandiff= abs(mu.pos-mu.neg)
+npos= length(row.names(ER.pos))
+nneg= length(row.names(ER.neg))
+ntotal=npos+nneg
+denominator= sqrt(((npos-1)* var.pos)+ ((nneg-1)*var.neg))
+fac= sqrt((npos*nneg*(ntotal-2))/ntotal)
+tscores= (meandiff/denominator)* fac
+index <- order(tscores, decreasing=TRUE)
+data.sel <- df[,index[1:100]]
+best100genes= colnames(data.sel)
+
+```
+
+
+
+```{r}
+list_df5 = list(DFSVMRFE,DFSigFeature,data.sel)
+
+col_common5 = colnames(list_df5[[1]])
+for (i in 2:length(list_df5)){
+  col_common5 = intersect(col_common5, colnames(list_df5[[i]]))
+}
+length(col_common5)
+```
+## which of the three reduced datastet is best. Number 3, p-values are not corrected for multiple testing. 
+
+
+```{r}
+pvalsigFe <- sigFeaturePvalue(dfpredictors, Y, 100, sigfeatureRankedList)
+pvalRFE <- sigFeaturePvalue(dfpredictors, Y, 100, featureRankedList)
+par(mfrow=c(1,2))
+hist(unlist(pvalsigFe),breaks=50, col="skyblue", main=paste("sigFeature"),
+     xlab="p value")
+```
+
+```{r}
+hist(unlist(pvalRFE),breaks=50, col="skyblue",
+     main=paste("SVM-RFE"), xlab="p value")
+```
+
+ a comparison of p values produced by using top 100 features 
+(using “sigFeature” and “SVM-RFE” algorithm) is shown by using scatter box plot.Note the lower p-values for SVM-SigFeature
+
+
+```{r}
+mytitle<-'Box Plot'
+boxplot(unlist(pvalsigFe), unlist(pvalRFE), main=mytitle,
+        names=c("sigFeature", "SVM-RFE"),
+        ylab="p value", ylim=c(min(unlist(pvalsigFe)), max(unlist(pvalRFE))))
+stripchart(unlist(pvalsigFe), vertical=TRUE, method="jitter", add=TRUE, pch=16,
+           col=c('green'))
+stripchart(unlist(pvalRFE), vertical=TRUE, at=2, method="jitter", add=TRUE,
+           pch=16, col=c('blue'))
+grid(nx=NULL, ny=NULL, col="black", lty="dotted")
+```
+
+
+
+a heatmap is shown below with the expression value of top 20 features generated by using
+“sigFeature()” function.
+
+# 20 best genes from SigFeature Scaling 
+```{r}
+pheatmap(dfpredictors[ ,sigfeatureRankedList[1:20]], scale="row",
+         clustering_distance_rows="correlation")
+```
+
+
+ a heatmap is shown below with the expression value of top 20 features generated by using
+“svmrfeFeatureRanking()” function.
+
+# 20 best genes from SVM-RFE feature selection
+```{r}
+pheatmap(dfpredictors[ ,featureRankedList[1:20]], scale="row",
+         clustering_distance_rows="correlation")
+```
+
+
+Hence Best feature selection from the 3 I tried is the sigFeature. 
+## Run the SVM model on the reduced dataset 
+
+
+Hyperparameters: 
+
+1) Kernel: 3 options: linear, radial,polynomial 
+2) Cost, if choose radial: gamma, if choose polynomial, degree
+
+
+Method: Run a 10 fold cross validation using the top 100 features selected from the 3 different feature selection methods. In each iteration of the cross validation, tune the cost hyperparameter to get the best model from the training set, and apply this model on the test set. evaluate the performance of the model on two metrics: 1) auc score 2) accuracy. Try three kernels: 1) linear 2) radial and 3) polynomial
+
+## Model Building with top 100 features from sigFeature Model Selection 
+
+
+## Accuracy and AUC using kernel = radial 
+```{r}
+# install.packages('caret')
+
+DFSigFeature$relapse= df$relapse
+set.seed(123)
+ #Randomly shuffle the data
+DFSigFeature<-DFSigFeature[sample(nrow(DFSigFeature)),]
+folds = createFolds(DFSigFeature$relapse, k = 5)
+# in cv we are going to applying a created function to our 'folds'
+
+cv = lapply(folds, function(x) { # start of function
+  #  separate the Training set into it's 10 pieces
+  training_fold =DFSigFeature[-x, ] # training fold =  training set minus (-) it's sub test fold
+  test_fold =DFSigFeature[x, ] # 
+
+  # Tune the cost hyperparameter 
+  classifier = tune.svm(relapse ~ ., data =training_fold, kernal = "radial",gamma=1/100, cost=seq(from=1, to=20,by=1), probability = T)
+  # next step in the loop, we calculate the predictions and cm and we equate the accuracy
+  # note we are training on training_fold and testing its accuracy on the test_fold
+  y_pred = predict(classifier$best.model, newdata = test_fold[, -ncol(test_fold)])
+  cm = table(test_fold[,ncol(test_fold)], y_pred)
+  accuracy = (cm[1,1] + cm[2,2]) / (cm[1,1] + cm[2,2] + cm[1,2] + cm[2,1])
+  return(accuracy)
+})
+
+accuracy = mean(as.numeric(cv))
+accuracy
+```
+## Best acuracy: 0.6529762
+
+
+
+
+
+## Accuracy  using kernel = polynomial 
+```{r}
+# install.packages('caret')
+library(caret)
+DFSigFeature$relapse= df$relapse
+set.seed(3344)
+ #Randomly shuffle the data
+DFSigFeature<-DFSigFeature[sample(nrow(DFSigFeature)),]
+folds = createFolds(DFSigFeature$relapse, k = 5)
+# in cv we are going to applying a created function to our 'folds'
+
+cv = lapply(folds, function(x) { # start of function
+  #  separate the Training set into it's 10 pieces
+  training_fold =DFSigFeature[-x, ] # training fold =  training set minus (-) it's sub test fold
+  test_fold =DFSigFeature[x, ] # 
+
+  # Tune the cost hyperparameter 
+  classifier = tune.svm(relapse ~ ., data =training_fold, kernal = "polynomial", cost=seq(from=1, to=20,by=1), probability = T)
+  # next step in the loop, we calculate the predictions and cm and we equate the accuracy
+  # note we are training on training_fold and testing its accuracy on the test_fold
+  #print(classifier$best.parameters)
+  y_pred = predict(classifier$best.model, newdata = test_fold[, -ncol(test_fold)])
+  cm = table(test_fold[,ncol(test_fold)], y_pred)
+  accuracy = (cm[1,1] + cm[2,2]) / (cm[1,1] + cm[2,2] + cm[1,2] + cm[2,1])
+  return(accuracy)
+})
+
+accuracy = mean(as.numeric(cv))
+accuracy
+```
+
+#Accuracy= .7095238, best cost = 1 
+
+
+
+
+## Accuracy  using kernel = linear 
+```{r}
+# install.packages('caret')
+library(caret)
+DFSigFeature$relapse= df$relapse
+ #Randomly shuffle the data
+DFSigFeature<-DFSigFeature[sample(nrow(DFSigFeature)),]
+folds = createFolds(DFSigFeature$relapse, k = 5)
+# in cv we are going to applying a created function to our 'folds'
+
+cv = lapply(folds, function(x) { # start of function
+  #  separate the Training set into it's 10 pieces
+  training_fold =DFSigFeature[-x, ] # training fold =  training set minus (-) it's sub test fold
+  test_fold =DFSigFeature[x, ] # 
+
+  # Tune the cost hyperparameter 
+  classifier = tune.svm(relapse ~ ., data =training_fold, kernal = "linear", cost=seq(from=1, to=20,by=1), probability = T)
+  # next step in the loop, we calculate the predictions and cm and we equate the accuracy
+  # note we are training on training_fold and testing its accuracy on the test_fold
+  #print(classifier$best.parameters)
+  y_pred = predict(classifier$best.model, newdata = test_fold[, -ncol(test_fold)])
+  cm = table(test_fold[,ncol(test_fold)], y_pred)
+  accuracy = (cm[1,1] + cm[2,2]) / (cm[1,1] + cm[2,2] + cm[1,2] + cm[2,1])
+  return(accuracy)
+})
+
+accuracy = mean(as.numeric(cv))
+accuracy
+```
+
+Accuracy= .689, best cost= 3 
+
+
+### Using the full dataset 
+
+
+## Accuracy  using kernel = radial 
+```{r}
+# install.packages('caret')
+library(caret)
+DFSigFeature$relapse= df$relapse
+ #Randomly shuffle the data
+set.seed(1234)
+DFSigFeature<-DFSigFeature[sample(nrow(DFSigFeature)),]
+folds = createFolds(DFSigFeature$relapse, k = 5)
+# in cv we are going to applying a created function to our 'folds'
+
+cv = lapply(folds, function(x) { # start of function
+  #  separate the Training set into it's 10 pieces
+  training_fold =DFSigFeature[-x, ] # training fold =  training set minus (-) it's sub test fold
+  test_fold =DFSigFeature[x, ] # 
+
+  # Tune the cost hyperparameter 
+  classifier = tune.svm(relapse ~ ., data =training_fold, kernal = "radial", cost=seq(from=1, to=20,by=1), probability = T)
+  # next step in the loop, we calculate the predictions and cm and we equate the accuracy
+  # note we are training on training_fold and testing its accuracy on the test_fold
+  #print(classifier$best.parameters)
+  y_pred = predict(classifier$best.model, newdata = test_fold[, -ncol(test_fold)])
+  cm = table(test_fold[,ncol(test_fold)], y_pred)
+  accuracy = (cm[1,1] + cm[2,2]) / (cm[1,1] + cm[2,2] + cm[1,2] + cm[2,1])
+  return(accuracy)
+})
+
+accuracy = mean(as.numeric(cv))
+accuracy
+```
+
+Accuracy= 0.689881
+
+## Accuracy  using kernel = polynomial 
+```{r}
+# install.packages('caret')
+library(caret)
+set.seed(123455)
+ #Randomly shuffle the data
+df= df[sample(nrow(df)),]
+folds = createFolds(df$relapse, k = 10)
+# in cv we are going to applying a created function to our 'folds'
+
+cv = lapply(folds, function(x) { # start of function
+  #  separate the Training set into it's 10 pieces
+  training_fold =df[-x, ] # training fold =  training set minus (-) it's sub test fold
+  test_fold =df[x, ] # 
+
+  # Tune the cost hyperparameter 
+  classifier = tune.svm(relapse ~ ., data =training_fold, kernal = "polynomial", cost=seq(from=1, to=20,by=1), probability = T)
+  # next step in the loop, we calculate the predictions and cm and we equate the accuracy
+  # note we are training on training_fold and testing its accuracy on the test_fold
+  #print(classifier$best.parameters)
+  y_pred = predict(classifier$best.model, newdata = test_fold[, -ncol(test_fold)])
+  cm = table(test_fold[,ncol(test_fold)], y_pred)
+  accuracy = (cm[1,1] + cm[2,2]) / (cm[1,1] + cm[2,2] + cm[1,2] + cm[2,1])
+  return(accuracy)
+})
+
+accuracy = mean(as.numeric(cv))
+accuracy
+```
+
+```{r}
+bestModel= dfpredictors[ ,sigfeatureRankedList[1:20]]
+bestModel$relapse= df$relapse
+bestModel<-bestModel[sample(nrow(bestModel)),]  # Shuffle model 
+folds = createFolds(bestModel$relapse, k = 10)
+
+cv = lapply(folds, function(x) { # start of function
+  #  separate the Training set into it's 10 pieces
+  training_fold =bestModel[-x, ] # training fold =  training set minus (-) it's sub test fold
+  test_fold =bestModel[x, ] # 
+
+ 
+  classifier = svm(relapse ~ ., data =training_fold, kernal = "radial", cost=1, probability = T)
+  # next step in the loop, we calculate the predictions and cm and we equate the accuracy
+  # note we are training on training_fold and testing its accuracy on the test_fold
+  #print(classifier$best.parameters)
+  y_pred = predict(classifier, newdata = test_fold[, -ncol(test_fold)], probability=T)
+  data.svm.pred.prob.mat = attr(y_pred, "probabilities")
+  #print( data.svm.pred.prob.mat[,1])
+  cm = table(test_fold[,ncol(test_fold)], y_pred)
+  #print(cm["TRUE","TRUE"])
+  #print(data.svm.pred.prob.mat)
+  datasvmroc = roc(predictions = data.svm.pred.prob.mat[,2], test_fold$relapse)
+  #plot(datasvmroc, main=paste("AUC = ", auc(datasvmroc), sep=" "))
+#auc_score= auc(datasvmroc)  # 
+  cm = table(test_fold[,ncol(test_fold)], y_pred)
+  accuracy = (cm[1,1] + cm[2,2]) / (cm[1,1] + cm[2,2] + cm[1,2] + cm[2,1])
+  
+return(accuracy)
+})
+
+accuracy = mean(as.numeric(cv))
+accuracy
+```
+## Best Model kernal= polynomial, accuracy = 0.7783333, cost= 1 
+
+```{r}
+write.table(colnames(bestModel), file = "Top20Genes.txt", sep= "\t", row.names= FALSE, col.names = FALSE)
+```
+
+```{r}
+
+```
+
+
+```{r}
+predictors
+```
+
